@@ -1,0 +1,58 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Verify version matches release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib
+          tag = os.environ.get('RELEASE_TAG', '')
+          if not tag:
+              print('Missing release tag name')
+              sys.exit(1)
+          expected = tag[1:] if tag.startswith('v') else tag
+          with open('pyproject.toml', 'rb') as f:
+              data = tomllib.load(f)
+          version = data['project']['version']
+          if version != expected:
+              print(f"Version mismatch: pyproject={version} tag={expected}")
+              sys.exit(1)
+          print(f"Version OK: {version}")
+          PY
+
+      - name: Build distributions (sdist + wheel)
+        run: uv build
+
+      - name: Publish to PyPI (Twine via uvx)
+        if: success()
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          uvx --from twine twine upload --non-interactive dist/*
